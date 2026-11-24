@@ -23,6 +23,22 @@ def load(name):
     return json.loads((FIXTURES / f"{name}.json").read_text())
 
 
+def senpi(url, body=None):
+    """senpi.ai as the fixtures have it: the tracked-wallet list, BTC with proven traders, POLYX with none."""
+    name = "senpi_traders" if url.endswith("/traders.json") else "senpi_" + url.split("/assets/")[1].split("/")[0]
+    path = FIXTURES / f"{name}.json"
+    if not path.exists():
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+    return path.read_bytes()
+
+
+@pytest.fixture(autouse=True)
+def fresh_caches(monkeypatch):
+    """Every test starts with empty caches and never reaches senpi.ai unless it stubs request."""
+    whales._context.clear()
+    monkeypatch.setattr(whales, "_tracked", [float("inf"), set()])
+
+
 def notional(trades):
     return sum(float(t["sz"]) * float(t["px"]) for t in trades)
 
@@ -61,16 +77,42 @@ def test_replayed_and_repeated_trades_alert_once(monkeypatch):
 
 
 def test_alert_text(monkeypatch):
-    monkeypatch.setattr(whales, "request", lambda url, body=None: (FIXTURES / "senpi_BTC.json").read_bytes())
-    whales._context.clear()
+    monkeypatch.setattr(whales, "request", senpi)
     (order,) = whales.big_trades(load("trades_snapshot")["data"], 1_000_000)
-    first, link, context = whales.trade_text(order, whales.senpi_context("BTC")).splitlines()
+    first, link, context = whales.trade_text(order, whales.senpi_context("BTC"), True).splitlines()
     assert re.search(r"  BTC  (BUY|SELL) \S+ @ \S+ = \$1\.1M  buyer 0x[0-9a-f]{5}", first)
     assert all(len(a) == 7 for a in re.findall(r"0x[0-9a-f]+", first))  # short addresses only
     assert link == f"  taker: https://senpi.ai/traders/{order['taker']}"
-    assert context == "  Senpi top traders: $139.2M long (29 wallets), $309.6M short (46 wallets). https://senpi.ai/assets/BTC"
+    assert context == "  Senpi proven traders: $139.2M long (29 wallets), $309.6M short (46 wallets). https://senpi.ai/assets/BTC"
     text = first + link + context
     assert "coin" not in text.lower() and not re.search("[%s%s]" % (chr(0x2013), chr(0x2014)), text)
+
+
+def test_a_market_no_proven_trader_holds_gets_just_its_link(monkeypatch):
+    monkeypatch.setattr(whales, "request", senpi)
+    assert load("senpi_POLYX")["positioning"] is None                   # real response, 24 Nov 2026
+    assert whales.senpi_context("POLYX") == "Senpi market page: https://senpi.ai/assets/POLYX"
+    alerts, trades = [], [dict(t, coin="POLYX") for t in load("trades_snapshot")["data"]]
+    whales.on_trades(trades, 0, set(), 1_000_000, alerts.append)      # used to raise TypeError and end the script
+    assert len(alerts) == 1 and alerts[0].endswith("  Senpi market page: https://senpi.ai/assets/POLYX")
+    assert "taker:" not in alerts[0]                                   # this taker is not a tracked wallet
+
+
+def test_only_a_wallet_senpi_tracks_gets_a_taker_link(monkeypatch):
+    monkeypatch.setattr(whales, "request", senpi)
+    whales._tracked[0] = 0.0                                            # due for a read
+    assert whales.tracked("0x0000000000000000000000000000000000000002")
+    assert not whales.tracked("0x0000000000000000000000000000000000000003")
+    (order,) = whales.big_trades(load("trades_snapshot")["data"], 1_000_000)
+    assert "taker:" not in whales.trade_text(order, "", False)
+
+
+def test_an_unreadable_wallet_list_links_nobody_and_does_not_crash(monkeypatch):
+    def down(url, body=None):
+        raise urllib.error.URLError("senpi.ai unreachable")
+    monkeypatch.setattr(whales, "request", down)
+    whales._tracked[0] = 0.0
+    assert not whales.tracked("0x0000000000000000000000000000000000000002")
 
 
 def test_no_senpi_line_for_a_market_without_a_page(monkeypatch):
@@ -101,6 +143,13 @@ def test_position_changes_of_at_least_the_threshold():
     ]  # the $7K SOL close and the $30 XRP flip are under $25K
     assert whales.changes(old, new, 0)[-1] == "flipped XRP to long, now $10"
     assert whales.changes(new, dict(new, BTC=(30.1, 1_806_000.0)), 25_000) == []
+
+
+def test_a_wallet_reply_without_positions_does_not_stop_the_watch(monkeypatch, capsys):
+    monkeypatch.setattr(whales, "info", lambda body: {"marginSummary": {}})   # no assetPositions
+    alerts, last = [], {}
+    whales.poll([USER], [""], last, 1_000_000, alerts.append)
+    assert alerts == [] and last == {} and "Could not read 0x000aa" in capsys.readouterr().out
 
 
 def test_watch_takes_a_baseline_then_alerts(monkeypatch):
@@ -184,9 +233,9 @@ def test_rejects_a_bad_watch_address():
 
 def readme_example(monkeypatch):
     """The alerts the README shows: the $1M+ order in the BTC fixture and a watched wallet opening its BTC long."""
-    monkeypatch.setattr(whales, "request", lambda url, body=None: (FIXTURES / "senpi_BTC.json").read_bytes())
+    monkeypatch.setattr(whales, "request", senpi)
     monkeypatch.setattr(whales, "info", fake_info)
-    whales._context.clear()
+    whales._tracked[0] = 0.0                       # the fixture's taker is on the tracked list
     alerts, trades = [], load("trades_snapshot")["data"]
     whales.on_trades(trades, 0, set(), 1_000_000, alerts.append)
     monkeypatch.setattr(whales.time, "time", lambda: trades[-1]["time"] / 1000 + 60)

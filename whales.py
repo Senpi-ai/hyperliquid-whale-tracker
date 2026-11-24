@@ -1,6 +1,6 @@
 """hyperliquid-whale-tracker, from Senpi (senpi.ai).
 
-Prints every big trade on Hyperliquid as it happens, with what Senpi's top traders hold in that market.
+Prints every big trade on Hyperliquid as it happens, with what Senpi's proven traders hold in that market.
 
     python whales.py [--min-usd 1000000] [--assets BTC,ETH,xyz:TSLA | --top 20] [--watch 0xabc...,0xdef...] [--webhook URL]
 
@@ -56,8 +56,8 @@ def pick(volume, assets, top):
 def big_trades(trades, min_usd):
     """One taker order can fill against hundreds of resting orders, and each fill is its own print. Add the prints of
     each taker order back together (same block, transaction and side) and keep the orders worth at least min_usd.
-    ponytail: groups within one websocket message, which held every order's prints in testing; buffer across
-    messages if an order ever arrives split."""
+    Groups within one websocket message, which held every order's prints in testing; buffer across messages if an
+    order ever arrives split."""
     orders = {}
     for t in trades:
         buyer, seller = t["users"]
@@ -73,29 +73,44 @@ def big_trades(trades, min_usd):
     return [o for o in orders.values() if o["usd"] >= min_usd]
 
 
-_context = {}
+_context, _tracked = {}, [0.0, set()]
 
 
 def senpi_context(asset):
-    """What Senpi's top traders hold in this market, from senpi.ai/assets/<symbol>/data.json, cached 5 minutes like the file."""
+    """What Senpi's proven traders hold in this market, from senpi.ai/assets/<symbol>/data.json, cached 5 minutes like
+    the file. Just the market's link when no proven trader holds it (positioning is null)."""
     cached = _context.get(asset)
     if not cached or time.time() - cached[0] > 300:
         try:
             d = json.loads(request(f"https://senpi.ai/assets/{asset}/data.json"))
             p = d["positioning"]
-            line = (f"Senpi top traders: {money(p['long'])} long ({plural(p['longWallets'], 'wallet')}), "
-                    f"{money(p['short'])} short ({plural(p['shortWallets'], 'wallet')}). {d['url']}")
-        except (OSError, ValueError, KeyError):  # not every market has a Senpi page
+            line = (f"Senpi proven traders: {money(p['long'])} long ({plural(p['longWallets'], 'wallet')}), "
+                    f"{money(p['short'])} short ({plural(p['shortWallets'], 'wallet')}). {d['url']}"
+                    if p is not None else f"Senpi market page: {d['url']}")
+        except (OSError, ValueError, KeyError, TypeError):  # not every market has a Senpi page
             line = ""
         cached = _context[asset] = (time.time(), line)
     return cached[1]
 
 
-def trade_text(o, context):
+def tracked(address):
+    """Is this a wallet senpi.ai tracks (senpi.ai/traders.json, read hourly)? Only those get a link: a page for any
+    other wallet makes senpi.ai read Hyperliquid live, and chat apps open every link in an alert to preview it."""
+    if time.time() - _tracked[0] > 3600:
+        try:
+            _tracked[1] = {t["address"].lower() for t in json.loads(request("https://senpi.ai/traders.json"))["traders"]}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass  # keep the last list; with none yet, no taker gets a link until the next try
+        _tracked[0] = time.time()
+    return address.lower() in _tracked[1]
+
+
+def trade_text(o, context, linked=False):
     side = "BUY" if o["side"] == "B" else "SELL"
     lines = [f"{clock(o['time'])}  {o['asset']}  {side} {num(o['size'])} @ {num(o['usd'] / o['size'])} = {money(o['usd'])}  "
-             f"buyer {who(o['buyers'])}, seller {who(o['sellers'])}",
-             f"  taker: https://senpi.ai/traders/{o['taker']}"]
+             f"buyer {who(o['buyers'])}, seller {who(o['sellers'])}"]
+    if linked:
+        lines.append(f"  taker: https://senpi.ai/traders/{o['taker']}")
     return "\n".join(lines + ([f"  {context}"] if context else []))
 
 
@@ -104,7 +119,7 @@ def on_trades(trades, started, seen, min_usd, alert):
     for o in big_trades(trades, min_usd):
         if o["time"] >= started and o["key"] not in seen:
             seen.add(o["key"])
-            alert(trade_text(o, senpi_context(o["asset"])))
+            alert(trade_text(o, senpi_context(o["asset"]), tracked(o["taker"])))
 
 
 def stream(assets, min_usd, alert):
@@ -165,8 +180,8 @@ def poll(users, dexes, last, min_usd, alert):
     for user in users:
         try:
             held = positions(user, dexes)
-        except (OSError, ValueError) as e:
-            print(f"Could not read {short(user)}: {e}", flush=True)
+        except (OSError, ValueError, KeyError, TypeError) as e:  # KeyError: a reply without assetPositions
+            print(f"Could not read {short(user)}: {e!r}", flush=True)
             continue
         if user in last:
             for line in changes(last[user], held, min_usd):

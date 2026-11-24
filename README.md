@@ -1,6 +1,6 @@
 # hyperliquid-whale-tracker
 
-hyperliquid-whale-tracker is a free, open-source Python script from [Senpi](https://senpi.ai) that tracks whale movements on Hyperliquid: it prints every big trade as it happens, with what top traders hold in that market, and alerts you when a wallet you watch opens, closes, flips or resizes a position.
+hyperliquid-whale-tracker is a free, open-source Python script from [Senpi](https://senpi.ai) that tracks whale movements on Hyperliquid: it prints every big trade as it happens, with what Senpi's proven traders hold in that market, and alerts you when a wallet you watch opens, closes, flips or resizes a position.
 
 For a free live view of where the top traders and the biggest whales are positioned, see [senpi.ai/traders](https://senpi.ai/traders).
 
@@ -34,7 +34,7 @@ The tests run offline: `pip install pytest -r requirements.txt && pytest -q`
 
 ## What it shows
 
-For each order at or above `--min-usd`: the time (UTC), market, side (BUY or SELL, from the taker's side), size, average price, notional, the buyer and the seller, a link to the taker's page on Senpi, and one line from Senpi's free asset file: what Senpi's top traders hold long and short in that market, with a link to its Senpi page. Wallets show as 0x plus their last 5 characters; links carry the full address.
+For each order at or above `--min-usd`: the time (UTC), market, side (BUY or SELL, from the taker's side), size, average price, notional, the buyer and the seller, a link to the taker's page on Senpi when Senpi tracks that wallet, and one line from Senpi's free asset file: what Senpi's proven traders hold long and short in that market, with a link to its Senpi page. Wallets show as 0x plus their last 5 characters; links carry the full address.
 
 For each watched wallet: one line when a position opens, closes, flips or changes by at least `--min-usd`, with a link to the wallet's page on Senpi.
 
@@ -46,7 +46,7 @@ From the offline test fixtures: real responses with every wallet address, transa
 $ python3 whales.py --assets BTC --watch 0x00000000000000000000000000000000000000aa
 2026-11-18 20:19:33 UTC  BTC  SELL 17.86 @ 61,405 = $1.1M  buyer 0x00001 +10 more, seller 0x00002
   taker: https://senpi.ai/traders/0x0000000000000000000000000000000000000002
-  Senpi top traders: $139.2M long (29 wallets), $309.6M short (46 wallets). https://senpi.ai/assets/BTC
+  Senpi proven traders: $139.2M long (29 wallets), $309.6M short (46 wallets). https://senpi.ai/assets/BTC
 2026-11-18 20:20:39 UTC  0x000aa opened a $1.5M BTC long
   https://senpi.ai/traders/0x00000000000000000000000000000000000000aa
 ```
@@ -61,13 +61,14 @@ The first alert is one taker order: a sell that filled against 11 resting orders
 - **Staying connected.** A ping every 30 seconds (Hyperliquid closes connections that go 60 seconds without a message) and a reconnect 5 seconds after any drop. Each subscription starts with a replay of recent trades: anything from before the script started is skipped, and nothing alerts twice.
 - **Watching wallets.** `clearinghouseState` for each wallet on every perp dex, every 60 seconds, compared with the last read.
 - **Context.** `https://senpi.ai/assets/<symbol>/data.json`, read at most every 5 minutes per market, the file's own cache time.
+- **Taker links.** Only for wallets Senpi tracks, from `https://senpi.ai/traders.json`, read once an hour. A page for any other wallet makes senpi.ai read Hyperliquid live, and chat apps open every link in an alert to preview it.
 
 ## Limits
 
 - Perp markets only; spot trades are not followed.
 - The price shown is the order's average: notional divided by size.
 - Hyperliquid limits each IP to 10 websocket connections, 1,000 subscriptions and 1,200 request weight a minute. Each watched wallet costs one `clearinghouseState` call (weight 2) per perp dex per minute.
-- The Senpi line appears only for markets that have a Senpi page.
+- The Senpi line appears only for markets that have a Senpi page. When no proven trader holds the market, it is just the link.
 - Alerts go out as they happen, so a slow webhook slows the feed.
 
 ## Go further with Senpi
