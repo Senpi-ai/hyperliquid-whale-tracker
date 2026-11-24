@@ -1,0 +1,38 @@
+{
+ "source": "Hyperliquid and Senpi's engine; not investment advice",
+ "symbol": "BTC",
+ "name": "BTC",
+ "assetClass": "crypto",
+ "listingState": "listed",
+ "url": "https://senpi.ai/assets/BTC",
+ "asOf": "2026-11-23T23:26:05.000Z",
+ "market": {
+  "mark": 61446,
+  "change24h": 0.0070999999999999995,
+  "volume24h": 4951595410.863645,
+  "openInterest": 2307842664,
+  "fundingHourly": 1.25e-05,
+  "fundingApr": 0.10949999999999999,
+  "maxLeverage": 40,
+  "oracle": 61464,
+  "premium": -0.00029285435376802393,
+  "fundingPercentile30d": 64.7
+ },
+ "signals": {
+  "score": 33,
+  "stance": "Shorts pressing",
+  "driver": "Top traders short",
+  "because": "shorts at 69% of top-trader notional ($449M)"
+ },
+ "positioning": {
+  "long": 139240156,
+  "short": 309556451,
+  "longWallets": 29,
+  "shortWallets": 46,
+  "shift": {
+   "h1": 37272,
+   "h4": 22023842,
+   "h24": 63530754
+  }
+ }
+}
